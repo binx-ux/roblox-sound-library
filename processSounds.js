@@ -18,8 +18,8 @@ function autoTag(name) {
 }
 
 // ======== Deduplicate & add new sounds ========
-const existingIDs = new Set(sounds.map(s => s.id));
-const existingNames = new Set(sounds.map(s => s.name));
+const existingIDs = new Set(sounds.sounds.map(s => s.id));
+const existingNames = new Set(sounds.sounds.map(s => s.name));
 const added = [];
 
 for (const s of newSounds) {

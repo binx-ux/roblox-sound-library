@@ -3,11 +3,7 @@ const axios = require("axios");
 
 const JSON_PATH = "./sounds.json";
 
-// IDs you wanna add
-const NEW_SOUND_IDS = [
-  1234567890,
-  9876543210
-];
+const NEW_SOUND_IDS = require("./new_ids.json").ids;
 
 // keyword → tag rules
 const TAG_RULES = {

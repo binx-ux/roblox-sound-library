@@ -27,7 +27,7 @@ jobs:
 
       - name: Commit and push changes
         env:
-          GH_PAT: ${{ secrets.GH_PAT }}
+          GH_PAT: ${{ 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 }}
         run: |
           git config user.name "sound-bot"
           git config user.email "sound-bot@users.noreply.github.com"

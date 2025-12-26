@@ -1,165 +1,89 @@
-#!/usr/bin/env node
-'use strict';
-
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
+const fetch = require('node-fetch');
 const { execSync } = require('child_process');
 
-const JSON_PATH = path.resolve(__dirname, './sounds.json');
-const NEW_IDS_PATH = path.resolve(__dirname, './new_ids.json');
+const SOUNDS_FILE = path.join(__dirname, 'sounds.json');
 
-const TAG_RULES = {
-  kill: ['kill', 'death', 'hit', 'headshot', 'slay'],
-  ui: ['click', 'hover', 'menu', 'notify', 'button'],
-  music: ['music', 'song', 'beat', 'phonk', 'remix']
-};
+// Put your new IDs here
+const newIds = [
+  { name: "Anime Girl Laugh", id: 6389463761, tags: ["anime","laugh","meme"] },
+  { name: "Bass-Boosted Fart Noise", id: 6445594239, tags: ["bass","meme","funny"] },
+  { name: "Boat Horn", id: 229325720, tags: ["horn","loud"] },
+  { name: "BONK", id: 8864069181, tags: ["bonk","meme"] },
+  { name: "BYE BYE!", id: 7334141704, tags: ["bye","meme"] },
+  { name: "COD “Mission Failed”", id: 7361248895, tags: ["cod","fail","game"] },
+  { name: "Everybody in this Server…", id: 1461317727, tags: ["announcement","meme"] },
+  { name: "EZ", id: 8922169253, tags: ["toxic","meme"] },
+  { name: "FNAF Jumpscare", id: 8308107333, tags: ["fnaf","scary","jumpscare"] },
+  { name: "Looks like I deleted you!", id: 8257514392, tags: ["toxic","meme"] },
+  // add the rest...
+];
 
-function autoTag(name) {
-  const lower = name.toLowerCase();
-  const tags = [];
-  for (const tag in TAG_RULES) {
-    if (TAG_RULES[tag].some(word => lower.includes(word))) {
-      tags.push(tag);
-    }
-  }
-  return tags.length ? tags : ['meme'];
-}
-
-function isValidId(id) {
-  if (typeof id === 'number' && Number.isFinite(id)) return true;
-  if (typeof id === 'string' && /^\d+$/.test(id.trim())) return true;
-  return false;
-}
-
-async function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function fetchSoundName(id, { retries = 4, baseDelay = 500 } = {}) {
-  const url = `https://economy.roblox.com/v2/assets/${id}/details`;
-  for (let attempt = 0; attempt <= retries; attempt++) {
+// Helper: fetch Roblox sound name with retries
+async function fetchSoundName(id, retries = 4, delay = 5000) {
+  const url = `https://api.roblox.com/marketplace/productinfo?assetId=${id}`;
+  for (let i = 0; i <= retries; i++) {
     try {
-      const res = await axios.get(url, { timeout: 10_000 });
-      return res.data?.Name ?? res.data?.name ?? null;
-    } catch (err) {
-      const status = err?.response?.status;
-      if (status === 429) {
-        const retryAfter = Number(err.response.headers['retry-after']) || null;
-        const wait = retryAfter ? retryAfter * 1000 : baseDelay * Math.pow(2, attempt);
-        console.warn(`429 for id=${id}, waiting ${wait}ms (${attempt + 1}/${retries})`);
-        await sleep(wait);
+      const res = await fetch(url);
+      if (res.status === 429) {
+        if (i === retries) throw new Error(`Rate-limited, exceeded retries for id=${id}`);
+        await new Promise(r => setTimeout(r, delay));
         continue;
       }
-      if (!status || (status >= 500 && status < 600)) {
-        const wait = baseDelay * Math.pow(2, attempt);
-        console.warn(`Transient error fetching id=${id} (attempt ${attempt + 1}/${retries}): ${err.message}`);
-        await sleep(wait);
-        continue;
-      }
-      console.error(`Failed to fetch id=${id}: ${err.message} (status: ${status || 'network'})`);
-      return null;
+      const data = await res.json();
+      if (!data.Name) throw new Error(`No name returned for id=${id}`);
+      return data.Name;
+    } catch (e) {
+      if (i === retries) throw e;
+      await new Promise(r => setTimeout(r, delay));
     }
   }
-  console.error(`Exceeded retries fetching id=${id}`);
-  return null;
 }
 
-function backupFile(filePath) {
-  try {
-    const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupPath = `${filePath}.bak.${ts}`;
-    fs.copyFileSync(filePath, backupPath);
-    console.log(`Backup created: ${backupPath}`);
-  } catch (err) {
-    console.warn(`Could not create backup: ${err.message}`);
+// Main function
+(async () => {
+  const existing = JSON.parse(fs.readFileSync(SOUNDS_FILE, 'utf8'));
+  const existingNames = new Set(existing.sounds.map(s => s.name));
+
+  const toAdd = [];
+
+  for (const s of newIds) {
+    if (!existingNames.has(s.name)) {
+      try {
+        // Optional: verify name from API
+        // const fetchedName = await fetchSoundName(s.id);
+        // s.name = fetchedName;
+
+        existing.sounds.push(s);
+        existingNames.add(s.name);
+        toAdd.push(s);
+        console.log(`Added: ${s.name} (id=${s.id})`);
+      } catch (e) {
+        console.warn(`Skipping id ${s.id}: ${e.message}`);
+      }
+    } else {
+      console.log(`Already present: ${s.id}`);
+    }
   }
-}
 
-function loadJson(filePath) {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch (err) {
-    throw new Error(`Unable to read/parse ${filePath}: ${err.message}`);
-  }
-}
-
-function saveJson(filePath, data) {
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
-  console.log(`Saved ${filePath}`);
-}
-
-function pushChanges() {
-  const token = process.env.GITHUB_TOKEN;
-  if (!token) {
-    console.warn('GITHUB_TOKEN not set. Skipping GitHub push.');
+  if (toAdd.length === 0) {
+    console.log('Nothing new to add.');
     return;
   }
 
+  // Save updated JSON
+  fs.writeFileSync(SOUNDS_FILE, JSON.stringify(existing, null, 2));
+
+  // Git commit & push
   try {
-    execSync('git config user.name "sound-bot"', { stdio: 'ignore' });
-    execSync('git config user.email "sound-bot@users.noreply.github.com"', { stdio: 'ignore' });
-    execSync('git add sounds.json', { stdio: 'inherit' });
-    execSync('git commit -m "Auto-update sounds.json"', { stdio: 'ignore' });
-
-    // Replace https://github.com/username/repo.git with your repo URL
-    execSync(`git push https://${token}@github.com/binx-ux/roblox-sound-library.git HEAD:main`, { stdio: 'inherit' });
-    console.log('Pushed changes to GitHub.');
-  } catch (err) {
-    console.error('Git push failed:', err.message);
+    execSync('git config user.name "sound-bot"');
+    execSync('git config user.email "sound-bot@example.com"');
+    execSync('git add sounds.json');
+    execSync('git commit -m "Auto-update sounds.json"');
+    execSync('git push https://x-access-token:' + process.env.GITHUB_TOKEN + '@github.com/binx-ux/roblox-sound-library.git main');
+    console.log('Pushed changes to GitHub!');
+  } catch (e) {
+    console.error('Git push failed:', e.message);
   }
-}
-
-async function run() {
-  const data = loadJson(JSON_PATH);
-  const rawNewIds = loadJson(NEW_IDS_PATH).ids || [];
-
-  if (!Array.isArray(data.sounds)) data.sounds = [];
-  const existingIds = new Set(data.sounds.map(s => String(s.id)));
-  const existingNames = new Set(data.sounds.map(s => s.name.toLowerCase()));
-
-  const toAdd = [];
-  for (const raw of rawNewIds) {
-    if (!isValidId(raw)) continue;
-    const id = String(raw).trim();
-    if (existingIds.has(id)) continue;
-    toAdd.push(id);
-  }
-
-  console.log(`Attempting to add ${toAdd.length} new sounds...`);
-
-  for (const id of toAdd) {
-    const name = await fetchSoundName(id);
-    if (!name) continue;
-    if (existingNames.has(name.toLowerCase())) continue;
-
-    const tags = autoTag(name);
-    data.sounds.push({ name, id, tags });
-    console.log(`Added: ${name} (id=${id}) tags=${JSON.stringify(tags)}`);
-
-    existingIds.add(id);
-    existingNames.add(name.toLowerCase());
-  }
-
-  // Deduplicate by name and ID
-  const deduped = [];
-  const seenIds = new Set();
-  const seenNames = new Set();
-  for (const s of data.sounds) {
-    const nameLower = s.name.toLowerCase();
-    if (seenIds.has(s.id) || seenNames.has(nameLower)) continue;
-    seenIds.add(s.id);
-    seenNames.add(nameLower);
-    deduped.push({ name: s.name, id: s.id, tags: Array.isArray(s.tags) ? [...new Set(s.tags)] : autoTag(s.name) });
-  }
-
-  deduped.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-  data.sounds = deduped;
-
-  backupFile(JSON_PATH);
-  saveJson(JSON_PATH, data);
-
-  pushChanges();
-}
-
-run().catch(err => console.error('Fatal:', err));
+})();

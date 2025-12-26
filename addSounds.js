@@ -1,98 +1,99 @@
 const fs = require('fs');
 const path = require('path');
 const fetch = require('node-fetch');
-const { execSync } = require('child_process');
+const { exec } = require('child_process');
 
-const SOUNDS_FILE = path.join(__dirname, 'sounds.json');
+// Paths
+const soundsFile = path.join(__dirname, 'sounds.json');
+const newIdsFile = path.join(__dirname, 'new_ids.json');
 
-// New IDs to add
-const newIds = [
-  { name: "Anime Girl Laugh", id: 6389463761, tags: ["anime","laugh","meme"] },
-  { name: "Bass-Boosted Fart Noise", id: 6445594239, tags: ["bass","meme","funny"] },
-  { name: "Boat Horn", id: 229325720, tags: ["horn","loud"] },
-  { name: "BONK", id: 8864069181, tags: ["bonk","meme"] },
-  // ...add the rest here
-];
+// GitHub token (set in environment variable)
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+if (!GITHUB_TOKEN) {
+  console.error('Set your GITHUB_TOKEN environment variable!');
+  process.exit(1);
+}
 
-// Helper: fetch Roblox sound info with retries + backoff
-async function fetchSoundName(id, retries = 5, delay = 1000) {
-  const url = `https://api.roblox.com/marketplace/productinfo?assetId=${id}`;
-  for (let i = 0; i <= retries; i++) {
-    try {
-      const res = await fetch(url);
-      if (res.status === 429) {
-        const waitTime = delay * Math.pow(2, i); // exponential backoff
-        console.warn(`429 for id=${id}, waiting ${waitTime}ms (retry ${i + 1})`);
-        await new Promise(r => setTimeout(r, waitTime));
+// Load existing sounds
+let sounds = [];
+if (fs.existsSync(soundsFile)) {
+  sounds = JSON.parse(fs.readFileSync(soundsFile));
+}
+
+// Load new IDs
+if (!fs.existsSync(newIdsFile)) {
+  console.error('new_ids.json not found!');
+  process.exit(1);
+}
+const newIds = JSON.parse(fs.readFileSync(newIdsFile)).sounds;
+
+// Deduplicate by ID and name
+const existingIds = new Set(sounds.map(s => s.id));
+const existingNames = new Set(sounds.map(s => s.name));
+
+async function fetchSoundName(id, retries = 5, delay = 5000) {
+  try {
+    const res = await fetch(`https://api.roblox.com/marketplace/productinfo?assetId=${id}`);
+    if (res.status === 429) {
+      if (retries > 0) {
+        console.log(`429 rate limit for id=${id}, retrying in ${delay}ms (${retries} left)`);
+        await new Promise(r => setTimeout(r, delay));
+        return fetchSoundName(id, retries - 1, delay);
+      } else {
+        console.warn(`Exceeded retries fetching id=${id}`);
+        return null;
+      }
+    }
+    const data = await res.json();
+    if (data.Name) return data.Name;
+    return null;
+  } catch (err) {
+    console.error(`Error fetching id=${id}:`, err.message);
+    return null;
+  }
+}
+
+async function addSounds() {
+  const toAdd = newIds.filter(s => !existingIds.has(s.id) && !existingNames.has(s.name));
+  console.log(`Will attempt to add ${toAdd.length} new sound(s).`);
+
+  for (const sound of toAdd) {
+    let name = sound.name;
+    // If name is empty, fetch from Roblox
+    if (!name) {
+      name = await fetchSoundName(sound.id);
+      if (!name) {
+        console.warn(`Skipping id=${sound.id} (could not obtain name)`);
         continue;
       }
-      const data = await res.json();
-      if (!data.Name) throw new Error(`No name returned for id=${id}`);
-      return data.Name;
-    } catch (e) {
-      if (i === retries) throw e;
-      const waitTime = delay * Math.pow(2, i);
-      console.warn(`Error fetching id=${id}: ${e.message}, retrying in ${waitTime}ms`);
-      await new Promise(r => setTimeout(r, waitTime));
-    }
-  }
-}
-
-// Delay helper for batching
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-// Process sounds sequentially with delay to avoid rate limits
-async function processSounds() {
-  const existing = JSON.parse(fs.readFileSync(SOUNDS_FILE, 'utf8'));
-  const existingNames = new Set(existing.sounds.map(s => s.name));
-
-  const added = [];
-
-  for (const s of newIds) {
-    if (existingNames.has(s.name)) {
-      console.log(`Already present: ${s.name} (id=${s.id})`);
-      continue;
     }
 
-    try {
-      // Optional: fetch verified name from Roblox API
-      // const fetchedName = await fetchSoundName(s.id);
-      // s.name = fetchedName;
+    sounds.push({
+      id: sound.id,
+      name,
+      tags: sound.tags || []
+    });
 
-      existing.sounds.push(s);
-      existingNames.add(s.name);
-      added.push(s);
-      console.log(`Added: ${s.name} (id=${s.id})`);
-    } catch (e) {
-      console.warn(`Skipping id ${s.id}: ${e.message}`);
+    existingIds.add(sound.id);
+    existingNames.add(name);
+    console.log(`Added: ${name} (id=${sound.id}) tags=${JSON.stringify(sound.tags || [])}`);
+  }
+
+  // Write updated sounds.json
+  fs.writeFileSync(soundsFile, JSON.stringify(sounds, null, 2));
+  console.log('sounds.json updated!');
+
+  // Auto-push to GitHub
+  exec(`git add sounds.json && git commit -m "Auto-update sounds.json" && git push https://${GITHUB_TOKEN}@github.com/binx-ux/roblox-sound-library.git`, (err, stdout, stderr) => {
+    if (err) {
+      console.error('Git push failed:', err.message);
+      return;
     }
-
-    // Throttle requests: 1 request per 1 second
-    await delay(1000);
-  }
-
-  if (added.length === 0) {
-    console.log('No new sounds to add.');
-    return;
-  }
-
-  fs.writeFileSync(SOUNDS_FILE, JSON.stringify(existing, null, 2));
-  console.log(`Saved ${added.length} new sound(s) to sounds.json`);
-
-  // Git push
-  try {
-    execSync('git config user.name "sound-bot"');
-    execSync('git config user.email "sound-bot@example.com"');
-    execSync('git add sounds.json');
-    execSync('git commit -m "Auto-update sounds.json"');
-    execSync('git push https://x-access-token:' + process.env.GITHUB_TOKEN + '@github.com/binx-ux/roblox-sound-library.git main');
-    console.log('Pushed changes to GitHub!');
-  } catch (e) {
-    console.error('Git push failed:', e.message);
-  }
+    console.log('Git push successful!');
+    console.log(stdout);
+    if (stderr) console.error(stderr);
+  });
 }
 
 // Run
-processSounds().catch(e => console.error('Fatal error:', e.message));
+addSounds();

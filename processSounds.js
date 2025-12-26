@@ -8,14 +8,13 @@ if (fs.existsSync(soundsPath)) {
   sounds = JSON.parse(fs.readFileSync(soundsPath));
 }
 
-// ======== Auto-tagging function ========
+// ======== Auto-tagging function (4 tags only) ========
 function autoTag(name) {
   const lower = name.toLowerCase();
-  if (lower.includes('meme') || lower.includes('fart') || lower.includes('bonk')) return ['meme'];
-  if (lower.includes('music') || lower.includes('song') || lower.includes('trance')) return ['music'];
-  if (lower.includes('scream') || lower.includes('kill') || lower.includes('jumpscare')) return ['scary'];
-  if (lower.includes('laugh') || lower.includes('haha')) return ['funny'];
-  return ['other'];
+  if (lower.includes('meme') || lower.includes('fart') || lower.includes('bonk') || lower.includes('laugh')) return ['meme'];
+  if (lower.includes('music') || lower.includes('song') || lower.includes('trance') || lower.includes('theme')) return ['music'];
+  if (lower.includes('kill') || lower.includes('scream') || lower.includes('jumpscare')) return ['kill'];
+  return ['ui']; // default tag
 }
 
 // ======== Deduplicate & add new sounds ========

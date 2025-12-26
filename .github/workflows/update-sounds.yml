@@ -6,9 +6,6 @@ on:
     paths:
       - addSounds.js
 
-permissions:
-  contents: write   # <-- allows the workflow to push changes
-
 jobs:
   update:
     runs-on: ubuntu-latest
@@ -16,8 +13,6 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}  # ensures push works
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -30,10 +25,12 @@ jobs:
       - name: Run sound updater
         run: node addSounds.js
 
-      - name: Commit changes
+      - name: Commit and push changes
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           git config user.name "sound-bot"
           git config user.email "sound-bot@users.noreply.github.com"
           git add sounds.json
           git commit -m "auto-update sounds.json" || echo "No changes"
-          git push
+          git push https://$GITHUB_ACTOR:$GH_PAT@github.com/binx-ux/roblox-sound-library.git HEAD:main

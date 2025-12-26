@@ -1,35 +1,65 @@
 const fs = require('fs');
-const newSounds = require('./new_ids');
+const path = require('path');
 
-// ======== Load existing sounds.json ========
-const soundsPath = './sounds.json';
-let sounds = [];
-if (fs.existsSync(soundsPath)) {
-  sounds = JSON.parse(fs.readFileSync(soundsPath));
+// Paths
+const newIdsPath = path.join(__dirname, 'new_ids.js'); // Your new IDs file
+const soundsPath = path.join(__dirname, 'sounds.json'); // Your main sounds.json
+
+// Load new IDs
+let newIds;
+try {
+    newIds = require(newIdsPath); // expects an array like [{id: 123, name: "Sound Name"}]
+} catch (err) {
+    console.error('Failed to load new_ids.js:', err);
+    process.exit(1);
 }
 
-// ======== Auto-tagging function (4 tags only) ========
+// Load existing sounds
+let soundsData;
+try {
+    soundsData = JSON.parse(fs.readFileSync(soundsPath, 'utf8'));
+    if (!Array.isArray(soundsData.sounds)) soundsData.sounds = [];
+} catch (err) {
+    console.error('Failed to load sounds.json:', err);
+    process.exit(1);
+}
+
+const existingIDs = new Set(soundsData.sounds.map(s => s.id));
+const existingNames = new Set(soundsData.sounds.map(s => s.name));
+
+// Define allowed tags
+const allowedTags = ['meme', 'music', 'kill', 'ui'];
+
+// Auto-tag function
 function autoTag(name) {
-  const lower = name.toLowerCase();
-  if (lower.includes('meme') || lower.includes('fart') || lower.includes('bonk') || lower.includes('laugh')) return ['meme'];
-  if (lower.includes('music') || lower.includes('song') || lower.includes('trance') || lower.includes('theme')) return ['music'];
-  if (lower.includes('kill') || lower.includes('scream') || lower.includes('jumpscare')) return ['kill'];
-  return ['ui']; // default tag
+    name = name.toLowerCase();
+    return allowedTags.filter(tag => name.includes(tag));
 }
 
-// ======== Deduplicate & add new sounds ========
-const existingIDs = new Set(sounds.sounds.map(s => s.id));
-const existingNames = new Set(sounds.sounds.map(s => s.name));
-const added = [];
+// Process each new sound
+let addedCount = 0;
+for (const sound of newIds) {
+    if (!sound.id || !sound.name) continue;
 
-for (const s of newSounds) {
-  if (!existingIDs.has(s.id) && !existingNames.has(s.name)) {
-    const tags = autoTag(s.name);
-    sounds.push({ name: s.name, id: s.id, tags });
-    added.push(s.name);
-  }
+    if (existingIDs.has(sound.id) || existingNames.has(sound.name)) {
+        console.log(`Already present: ${sound.name} (id=${sound.id})`);
+        continue;
+    }
+
+    const tags = autoTag(sound.name);
+    const newSound = {
+        id: sound.id,
+        name: sound.name,
+        tags: tags
+    };
+
+    soundsData.sounds.push(newSound);
+    existingIDs.add(sound.id);
+    existingNames.add(sound.name);
+    addedCount++;
+    console.log(`Added: ${sound.name} (id=${sound.id}) tags=${JSON.stringify(tags)}`);
 }
 
-// ======== Save sounds.json ========
-fs.writeFileSync(soundsPath, JSON.stringify(sounds, null, 2));
-console.log(`Added ${added.length} new sound(s):`, added);
+// Save updated sounds.json
+fs.writeFileSync(soundsPath, JSON.stringify(soundsData, null, 2));
+console.log(`Saved ${addedCount} new sound(s) to sounds.json`);

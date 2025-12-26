@@ -1,65 +1,61 @@
-const fs = require('fs');
-const path = require('path');
-
-// Paths
-const newIdsPath = path.join(__dirname, 'new_ids.js'); // Your new IDs file
-const soundsPath = path.join(__dirname, 'sounds.json'); // Your main sounds.json
+const fs = require("fs");
+const path = require("path");
 
 // Load new IDs
-let newIds;
+const newSounds = require("./new_ids.js");
+
+// Path to your sounds.json
+const soundsFile = path.join(__dirname, "sounds.json");
+
+// Load existing sounds.json
+let sounds = [];
 try {
-    newIds = require(newIdsPath); // expects an array like [{id: 123, name: "Sound Name"}]
-} catch (err) {
-    console.error('Failed to load new_ids.js:', err);
-    process.exit(1);
+  const raw = fs.readFileSync(soundsFile, "utf-8");
+  sounds = JSON.parse(raw);
+  if (!Array.isArray(sounds)) sounds = [];
+} catch {
+  sounds = [];
 }
 
-// Load existing sounds
-let soundsData;
-try {
-    soundsData = JSON.parse(fs.readFileSync(soundsPath, 'utf8'));
-    if (!Array.isArray(soundsData.sounds)) soundsData.sounds = [];
-} catch (err) {
-    console.error('Failed to load sounds.json:', err);
-    process.exit(1);
+// Create sets for deduplication
+const existingIDs = new Set(sounds.map(s => s.id));
+const existingNames = new Set(sounds.map(s => s.name.toLowerCase()));
+
+// Auto-tagging function
+function getTags(name) {
+  const tags = [];
+  const lname = name.toLowerCase();
+  if (lname.includes("meme")) tags.push("meme");
+  if (lname.includes("music") || lname.includes("song")) tags.push("music");
+  if (lname.includes("kill") || lname.includes("bonk")) tags.push("kill");
+  if (lname.includes("ui") || lname.includes("button")) tags.push("ui");
+  return tags.length ? tags : ["meme"]; // default to meme if nothing matches
 }
 
-const existingIDs = new Set(soundsData.sounds.map(s => s.id));
-const existingNames = new Set(soundsData.sounds.map(s => s.name));
+// Process new sounds
+let added = 0;
+for (const s of newSounds) {
+  if (!s.id || !s.name) continue;
 
-// Define allowed tags
-const allowedTags = ['meme', 'music', 'kill', 'ui'];
+  const idStr = s.id.toString();
+  if (existingIDs.has(idStr) || existingNames.has(s.name.toLowerCase())) {
+    console.log(`Skipping existing: ${s.name} (${idStr})`);
+    continue;
+  }
 
-// Auto-tag function
-function autoTag(name) {
-    name = name.toLowerCase();
-    return allowedTags.filter(tag => name.includes(tag));
-}
+  const soundObj = {
+    id: idStr,
+    name: s.name,
+    tags: getTags(s.name),
+  };
 
-// Process each new sound
-let addedCount = 0;
-for (const sound of newIds) {
-    if (!sound.id || !sound.name) continue;
-
-    if (existingIDs.has(sound.id) || existingNames.has(sound.name)) {
-        console.log(`Already present: ${sound.name} (id=${sound.id})`);
-        continue;
-    }
-
-    const tags = autoTag(sound.name);
-    const newSound = {
-        id: sound.id,
-        name: sound.name,
-        tags: tags
-    };
-
-    soundsData.sounds.push(newSound);
-    existingIDs.add(sound.id);
-    existingNames.add(sound.name);
-    addedCount++;
-    console.log(`Added: ${sound.name} (id=${sound.id}) tags=${JSON.stringify(tags)}`);
+  sounds.push(soundObj);
+  existingIDs.add(idStr);
+  existingNames.add(s.name.toLowerCase());
+  added++;
+  console.log(`Added: ${s.name} (${idStr})`);
 }
 
 // Save updated sounds.json
-fs.writeFileSync(soundsPath, JSON.stringify(soundsData, null, 2));
-console.log(`Saved ${addedCount} new sound(s) to sounds.json`);
+fs.writeFileSync(soundsFile, JSON.stringify(sounds, null, 2));
+console.log(`\nSaved ${added} new sound(s) to sounds.json`);
